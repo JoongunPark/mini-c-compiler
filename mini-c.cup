@@ -1,0 +1,545 @@
+import java_cup.runtime.*;
+import Absyn.*;
+import java.io.*;
+
+parser code {:
+    public static void main (String args[]) throws Exception{
+        Absyn.writer = new PrintWriter("prod.txt", "UTF-8");
+        new parser(new Yylex(System.in)).parse();
+        System.out.println("Parsing sucess ");
+    }
+    public void syntax_error(Symbol cur_token) {
+        System.err.println("[Error]: [" + cur_token.left + ":" + cur_token.right + "] Syntax Error.");
+        System.exit(0);
+    }
+:}
+
+terminal UMINUS,MULT,DIV,PLUS,MINUS;
+terminal LT,GT,LTE,GTE,EQ,NEQ;
+terminal ASSIGN,LPAREN,RPAREN,LBRACE,RBRACE,LSBRACE,RSBRACE;
+terminal COMMA,SEMI,COLON;
+terminal INT,FLOAT,RETURN,WHILE,DO,FOR,IF,ELSE,SWITCH,CASE,DEFAULT,BREAK;
+terminal Integer    INTNUM;
+terminal Float      FLOATNUM;
+terminal String     ID;
+
+non terminal Absyn          base;
+non terminal Program        program;
+non terminal Decllist       decl_list;
+non terminal Decl           decl;
+non terminal Funclist       func_list;
+non terminal Func           func;
+non terminal Identlist      ident_list;
+non terminal Ident          ident;
+non terminal Paramlist      param_list;
+non terminal Type           type;
+non terminal CompStmt       comp_stmt;
+non terminal Stmtlist       stmt_list;
+non terminal AssignStmt     assign_stmt;
+non terminal Assign         assign;
+non terminal CallStmt       call_stmt;
+non terminal Call           call;
+non terminal RetStmt        ret_stmt;
+non terminal SwitchStmt     switch_stmt;
+non terminal Caselist       case_list;
+non terminal Expr           expr;
+non terminal Arglist        arg_list;
+
+non terminal Stmt           stmt, open_stmt, closed_stmt;
+non terminal IfStmt         if_stmt, if_open_else_stmt, if_closed_else_stmt;
+non terminal ForStmt        for_open_stmt, for_closed_stmt;
+non terminal WhileStmt      while_open_stmt, while_closed_stmt, do_stmt;
+
+precedence left     EQ, NEQ;
+precedence left     GT, LT, GTE, LTE;
+precedence left     PLUS, MINUS;
+precedence left     MULT, DIV;
+precedence right    UMINUS;
+precedence left     RBRACE, LBRACE;
+
+base ::=
+            program:p
+            {:
+                    Absyn.writer.close();  // production rule
+
+                    Absyn.writer = new PrintWriter("table.txt", "UTF-8");
+                    p.printSymTable(); // symbol table
+                    Absyn.writer.close();
+
+                    p = p.checkSemantic();
+
+                    Absyn.writer = new PrintWriter("tree.txt", "UTF-8");
+                    p.printAST(); // AST
+                    Absyn.writer.close();
+
+            :}
+        ;
+
+program ::=
+            {:
+                RESULT = new Program(null, null);
+            :}
+        |   decl_list:dl
+            {:
+                RESULT = new Program(dl, null);
+            :}
+        |   func_list:fl
+            {:
+                RESULT = new Program(null, fl);
+            :}
+        |   decl_list:dl func_list:fl
+            {:
+                RESULT = new Program(dl, fl);
+            :}
+        ;
+
+decl_list ::=
+            decl:d
+            {:
+                RESULT = new Decllist(d);
+            :}
+        |   decl_list:dl decl:d
+            {:
+                dl.add(d); RESULT = dl;
+            :}
+        ;
+
+func_list ::=
+            func:f
+            {:
+                RESULT = new Funclist(f);
+            :}
+        |   func_list:fl func:f
+            {:
+                fl.add(f); RESULT = fl;
+            :}
+        ;
+
+decl ::=
+            type:t ident_list:idl SEMI:s
+            {:
+                RESULT = new Decl(t,idl,new Pos(sleft,sright));
+            :}
+        ;
+
+ident_list ::=
+            ident:id
+            {:
+                RESULT = new Identlist(id);
+            :}
+        |   ident_list:idl COMMA ident:id
+            {:
+                idl.add(id); RESULT = idl;
+            :}
+        ;
+
+ident ::=
+            ID:id
+            {:
+                RESULT = new SingleIdent(id,new Pos(idleft,idright),new Pos(idleft,idright+id.length()-1));
+            :}
+        |   ID:id LSBRACE INTNUM:k RSBRACE:r
+            {:
+                RESULT = new ArrayIdent(id,k,new Pos(idleft,idright),new Pos(idleft, idright+id.length()+1+String.valueOf(k).length()));
+            :}
+        ;
+
+func ::=
+            type:t ID:fn LPAREN RPAREN comp_stmt:cs
+            {:
+                RESULT = new Func(t,fn,null,cs);
+            :}
+        |   type:t ID:fn LPAREN param_list:pl RPAREN comp_stmt:cs
+            {:
+                RESULT = new Func(t,fn,pl,cs);
+            :}
+        ;
+
+param_list ::=
+            type:t ident:id
+            {:
+                RESULT = new Paramlist(t,id);
+            :}
+        |   param_list:pl COMMA type:t ident:id
+            {:
+                pl.add(t,id); RESULT = pl;
+            :}
+        ;
+
+type ::=
+            INT:k
+            {:
+                RESULT = new Type(TypeName.INT,new Pos(kleft,kright),new Pos(kleft,kright+2));
+            :}
+        |   FLOAT:k
+            {:
+                RESULT = new Type(TypeName.FLOAT,new Pos(kleft,kright),new Pos(kleft,kright+4));
+            :}
+        ;
+
+comp_stmt ::=
+            LBRACE:l stmt_list:sl RBRACE:r
+            {:
+                RESULT = new CompStmt(null, sl,new Pos(lleft,lright), new Pos(rleft, rright));
+            :}
+        |   LBRACE:l decl_list:dl stmt_list:sl RBRACE:r
+            {:
+                RESULT = new CompStmt(dl, sl, new Pos(lleft,lright), new Pos(rleft, rright));
+            :}
+        ;
+
+stmt_list ::=
+            {:
+                RESULT = new Stmtlist(null,null);
+                Absyn.printProdRule("Stmtlist :="+RESULT.getPosition()+" :=");
+            :}
+        |   stmt_list:sl stmt:s
+            {:
+                String temp = sl.getPosition();
+                sl.add(s); RESULT = sl;
+                Absyn.printProdRule("Stmtlist"+RESULT.getPosition()+" := Stmtlist"+temp+" Stmt"+s.getPosition());
+            :}
+        ;
+
+stmt ::=
+            open_stmt:os
+            {:
+                RESULT = os;
+                Absyn.printProdRule("Stmt"+RESULT.getPosition()+" := OpenStmt"+os.getPosition());
+            :}
+        |   closed_stmt:cs
+            {:
+                RESULT = cs;
+                Absyn.printProdRule("Stmt"+RESULT.getPosition()+" := ClosedStmt"+cs.getPosition());
+            :}
+        ;
+
+open_stmt ::=
+            if_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("OpenStmt"+RESULT.getPosition()+" := IfStmt"+s.getPosition());
+            :}
+        |   if_open_else_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("OpenStmt"+RESULT.getPosition()+" := IfOpenElseStmt"+s.getPosition());
+            :}
+        |   for_open_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("OpenStmt"+RESULT.getPosition()+" := ForOpenStmt"+s.getPosition());
+            :}
+        |   while_open_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("OpenStmt"+RESULT.getPosition()+" := WhileOpenStmt"+s.getPosition());
+            :}
+        ;
+
+closed_stmt ::=
+            assign_stmt:as
+            {:
+                RESULT = as;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := AssignStmt"+as.getPosition());
+            :}
+        |   call_stmt:ca
+            {:
+                RESULT = ca;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := CallStmt"+ca.getPosition());
+            :}
+        |   ret_stmt:ret
+            {:
+                RESULT = ret;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := RetStmt"+ret.getPosition());
+            :}
+        |   switch_stmt:sw
+            {:
+                RESULT = sw;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := SwitchStmt"+sw.getPosition());
+            :}
+        |   comp_stmt:cs
+            {:
+                RESULT = cs;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := CompoundStmt"+cs.getPosition());
+            :}
+        |   if_closed_else_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := IfClosedElseStmt"+s.getPosition());
+            :}
+        |   for_closed_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := ForClosedStmt"+s.getPosition());
+            :}
+        |   while_closed_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := WhileClosedStmt"+s.getPosition());
+            :}
+        |   do_stmt:s
+            {:
+                RESULT = s;
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := DoWhileStmt"+s.getPosition());
+            :}
+        |   SEMI:s
+            {:
+                RESULT = new NullStmt(new Pos(sleft,sright),new Pos(sleft,sright));
+                Absyn.printProdRule("ClosedStmt"+RESULT.getPosition()+" := ;");
+            :}
+        ;
+
+assign_stmt ::=
+            assign:as SEMI:s
+            {:
+                RESULT = new AssignStmt(as,as.start,new Pos(sleft,sright));
+                Absyn.printProdRule("AssignStmt"+RESULT.getPosition()+" := Assign"+as.getPosition()+" ;");
+            :}
+        ;
+
+assign ::=
+            ID:id ASSIGN expr:e
+            {:
+                RESULT = new Assign(id,null,e,new Pos(idleft,idright+id.length()-1),e.end);
+                Absyn.printProdRule("Assign"+RESULT.getPosition()+" := ID:'"+id+"' = Expr"+e.getPosition());
+            :}
+        |   ID:id LSBRACE expr:idx RSBRACE ASSIGN expr:e
+            {:
+                RESULT = new Assign(id,idx,e,new Pos(idleft,idright+id.length()-1),e.end);
+                Absyn.printProdRule("Assign"+RESULT.getPosition()+" := ID:'"+id+"' [ Expr"+idx.getPosition()+" ] = Expr"+e.getPosition());
+            :}
+        ;
+
+call_stmt ::=
+            call:c SEMI:s
+            {:
+                RESULT = new CallStmt(c, c.start, new Pos(sleft,sright));
+                Absyn.printProdRule("CallStmt"+RESULT.getPosition()+" := Call"+c.getPosition()+" ;");
+            :}
+        ;
+call ::=
+            ID:id LPAREN RPAREN:r
+            {:
+                RESULT = new Call(id,null,new Pos(idleft,idright),new Pos(rleft,rright));
+                Absyn.printProdRule("Call"+RESULT.getPosition()+" := ID:'"+id+"' ( )");
+            :}
+        |   ID:id LPAREN arg_list:al RPAREN:r
+            {:
+                RESULT = new Call(id,al,new Pos(idleft,idright),new Pos(rleft,rright));
+                Absyn.printProdRule("Call"+RESULT.getPosition()+" := ID:'"+id+"' ( Arglist"+al.getPosition()+" )");
+            :}
+        ;
+
+ret_stmt ::=
+            RETURN:r SEMI:s
+            {:
+                RESULT = new RetStmt(null,new Pos(rleft,rright), new Pos(sleft,sright));
+                Absyn.printProdRule("RetStmt"+RESULT.getPosition()+" := return ;");
+            :}
+        |   RETURN:r expr:e SEMI:s
+            {:
+                RESULT = new RetStmt(e,new Pos(rleft,rright), new Pos(sleft,sright));
+                Absyn.printProdRule("RetStmt"+RESULT.getPosition()+" := return Expr"+e.getPosition()+" ;");
+            :}
+        ;
+
+if_stmt ::=
+            IF:i LPAREN expr:cond RPAREN stmt:th
+            {:
+                RESULT = new IfStmt(cond,th,null,new Pos(ileft,iright), th.end);
+                Absyn.printProdRule("IfStmt"+RESULT.getPosition()+" := if ( Expr"+cond.getPosition()+" ) Stmt"+th.getPosition());
+            :}
+        ;
+
+if_open_else_stmt ::=
+            IF:i LPAREN expr:cond RPAREN closed_stmt:th ELSE open_stmt:el
+            {:
+                RESULT = new IfStmt(cond,th,el,new Pos(ileft,iright), el.end);
+                Absyn.printProdRule("IfOpenElseStmt"+RESULT.getPosition()+" := if ( Expr"+cond.getPosition()+" ) ClosedStmt"+th.getPosition()+" else OpenStmt"+el.getPosition());
+            :}
+        ;
+
+if_closed_else_stmt ::=
+            IF:i LPAREN expr:cond RPAREN closed_stmt:th ELSE closed_stmt:el
+            {:
+                RESULT = new IfStmt(cond,th,el,new Pos(ileft,iright), el.end);
+                Absyn.printProdRule("IfClosedElseStmt"+RESULT.getPosition()+" := if ( Expr"+cond.getPosition()+" ) ClosedStmt"+th.getPosition()+" else ClosedStmt"+el.getPosition());
+            :}
+        ;
+
+while_open_stmt ::=
+            WHILE:w LPAREN expr:e RPAREN open_stmt:st
+            {:
+                RESULT = new WhileStmt(e,st,false,new Pos(wleft,wright), st.end);
+                Absyn.printProdRule("WhileOpenStmt"+RESULT.getPosition()+" := while ( Expr"+e.getPosition()+" ) OpenStmt"+st.getPosition()+" ;");
+            :}
+        ;
+
+while_closed_stmt ::=
+            WHILE:w LPAREN expr:e RPAREN closed_stmt:st
+            {:
+                RESULT = new WhileStmt(e,st,false,new Pos(wleft,wright), st.end);
+                Absyn.printProdRule("WhileClosedStmt"+RESULT.getPosition()+" := while ( Expr"+e.getPosition()+" ) ClosedStmt"+st.getPosition()+" ;");
+            :}
+        ;
+
+for_open_stmt ::=
+            FOR:f LPAREN assign:init SEMI expr:cond SEMI assign:as RPAREN open_stmt:st
+            {:
+                RESULT = new ForStmt(init,cond,as,st,new Pos(fleft,fright),st.end);
+                Absyn.printProdRule("ForOpenStmt"+RESULT.getPosition()+" := for ( Assign"+init.getPosition()+" ; Expr"+cond.getPosition()+" ; Assign+"+as.getPosition()+" ) OpenStmt"+st.getPosition());
+            :}
+        ;
+
+for_closed_stmt ::=
+            FOR:f LPAREN assign:init SEMI expr:cond SEMI assign:as RPAREN closed_stmt:st
+            {:
+                RESULT = new ForStmt(init,cond,as,st,new Pos(fleft,fright),st.end);
+                Absyn.printProdRule("ForClosedStmt"+RESULT.getPosition()+" := for ( Assign"+init.getPosition()+" ; Expr"+cond.getPosition()+" ; Assign"+as.getPosition()+" ) ClosedStmt"+st.getPosition());
+            :}
+        ;
+
+do_stmt ::=
+            DO:d stmt:st WHILE LPAREN expr:e RPAREN SEMI:s
+            {:
+                RESULT = new WhileStmt(e,st,true,new Pos(dleft,dright), new Pos(sleft,sright));
+                Absyn.printProdRule("WhileStmt"+RESULT.getPosition()+" : = do Stmt"+st.getPosition()+" while ( Expr"+e.getPosition()+" ) ;");
+            :}
+        ;
+
+switch_stmt ::=
+            SWITCH:s LPAREN ident:id RPAREN LBRACE case_list:cl RBRACE:r
+            {:
+                RESULT = new SwitchStmt(id,cl,null,false,new Pos(sleft,sright), new Pos(rleft,rright));
+                Absyn.printProdRule("SwitchStmt"+RESULT.getPosition()+" := switch ( Identifier"+id.getPosition()+" ) { Caselist"+cl.getPosition()+" }");
+            :}
+        |   SWITCH:s LPAREN ident:id RPAREN LBRACE case_list:cl DEFAULT COLON stmt_list:ds RBRACE:r
+            {:
+                RESULT = new SwitchStmt(id,cl,ds,false,new Pos(sleft,sright), new Pos(rleft,rright));
+                Absyn.printProdRule("SwitchStmt"+RESULT.getPosition()+" := switch ( Identifier"+id.getPosition()+" ) { Caselist"+cl.getPosition()+" default : Stmtlist"+ds.getPosition()+" }");
+            :}
+        |   SWITCH:s LPAREN ident:id RPAREN LBRACE case_list:cl DEFAULT COLON stmt_list:ds BREAK SEMI RBRACE:r
+            {:
+                RESULT = new SwitchStmt(id,cl,ds,true,new Pos(sleft,sright),new Pos(rleft,rright));
+                Absyn.printProdRule("SwitchStmt"+RESULT.getPosition()+" := switch ( Identifier"+id.getPosition()+" ) { Caselist"+cl.getPosition()+" default : Stmtlist"+ds.getPosition()+" break ; }");
+            :}
+        ;
+
+case_list ::=
+            {:
+                RESULT = new Caselist(null, null);
+                Absyn.printProdRule("Caselist"+RESULT.getPosition()+" :=");
+            :}
+        |   case_list:cl CASE:c INTNUM:k COLON stmt_list:sl
+            {:
+                String temp = cl.getPosition();
+                cl.add(k,sl,false,new Pos(cleft,cright), sl.end); RESULT = cl;
+                Absyn.printProdRule("Caselist"+RESULT.getPosition()+" := Caselist"+temp+" case INT:"+k+" : Stmtlist"+sl.getPosition());
+            :}
+        |   case_list:cl CASE:c INTNUM:k COLON stmt_list:sl BREAK SEMI:s
+            {:
+                String temp = cl.getPosition();
+                cl.add(k,sl,true,new Pos(cleft,cright), new Pos(sleft,sright)); RESULT = cl;
+                Absyn.printProdRule("Caselist"+RESULT.getPosition()+" := Caselist"+temp+" case INT:"+k+" : Stmtlist"+sl.getPosition()+" break ;");
+            :}
+        ;
+
+expr ::=
+            MINUS:m expr:e
+            {:
+                RESULT = new UnaryMinusExpr(e, new Pos(mleft,mright), e.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := - Expr"+e.getPosition());
+            :} %prec UMINUS
+        |   expr:l MULT expr:r
+            {:
+                RESULT = new MultExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" * Expr"+r.getPosition());
+            :}
+        |   expr:l DIV expr:r
+            {:
+                RESULT = new DivExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" / Expr"+r.getPosition());
+            :}
+        |   expr:l PLUS expr:r
+            {:
+                RESULT = new PlusExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" + Expr"+r.getPosition());
+            :}
+        |   expr:l MINUS expr:r
+            {:
+                RESULT = new MinusExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" - Expr"+r.getPosition());
+            :}
+        |   expr:l GT expr:r
+            {:
+                RESULT = new GTExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" > Expr"+r.getPosition());
+            :}
+        |   expr:l LT expr:r
+            {:
+                RESULT = new LTExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" < Expr"+r.getPosition());
+            :}
+        |   expr:l GTE expr:r
+            {:
+                RESULT = new GTEExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" >= Expr"+r.getPosition());
+            :}
+        |   expr:l LTE expr:r
+            {:
+                RESULT = new LTEExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" <= Expr"+r.getPosition());
+            :}
+        |   expr:l EQ expr:r
+            {:
+                RESULT = new EqualExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" == Expr"+r.getPosition());
+            :}
+        |   expr:l NEQ expr:r
+            {:
+                RESULT = new NotEqualExpr(l, r, l.start, r.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Expr"+l.getPosition()+" != Expr"+r.getPosition());
+            :}
+        |   call:c
+            {:
+                RESULT = new CallExpr(c, c.start, c.end);
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := Call"+c.getPosition());
+            :}
+        |   INTNUM:k
+            {:
+                RESULT = new IntExpr(k, new Pos(kleft,kright), new Pos(kleft,kright+k.toString().length()-1));
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := INT:"+k);
+            :}
+        |   FLOATNUM:k
+            {:
+                RESULT = new FloatExpr(k, new Pos(kleft,kright), new Pos(kleft,kright+k.toString().length()-1));
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := FLOAT:"+k);
+            :}
+        |   ID:i
+            {:
+                RESULT = new SingleIdExpr(i, new Pos(ileft,iright), new Pos(ileft,iright+i.length()-1));
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := ID:'"+i+"'");
+            :}
+        |   ID:i LSBRACE expr:e RSBRACE:r
+            {:
+                RESULT = new ArrayIdExpr(i, e, new Pos(ileft,iright), new Pos(rleft,rright));
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := ID:'"+i+"' [ Expr"+e.getPosition()+" ]");
+            :}
+        |   LPAREN:l expr:e RPAREN:r
+            {:
+                RESULT = new ParenExpr(e, new Pos(lleft,lright), new Pos(rleft,rright));
+                Absyn.printProdRule("Expr"+RESULT.getPosition()+" := ( Expr"+e.getPosition()+" )");
+            :}
+        ;
+
+arg_list ::=
+            expr:e
+            {:
+                RESULT = new Arglist(e);
+            :}
+        |   arg_list:al COMMA expr:e
+            {:
+                al.add(e); RESULT = al;
+            :}
+        ;
