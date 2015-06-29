@@ -1,0 +1,17 @@
+실행시키시는 순서
+
+make init
+make all
+make run < [input file]
+( [input file] 부분에 파싱할 c 프로그램을 넣어두시면 됩니다)
+
+제가 작성한 SampleTestInput.txt 를 실행시키고 싶을 시 
+
+make init
+make all 이후
+make test 를 입력하시면 됩니다.
+
+감사합니다
+
+20120479 박중언
+ideal8901@kaist.ac.kr
